@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="dictation_app">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>dictation_app</title>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <!-- 增强的语音合成脚本 -->
+  <script>
+    // 语音合成增强版
+    let bestVoice = null;
+    let audioContext = null;
+    let isInitialized = false;
+    const synth = window.speechSynthesis;
+
+    // 初始化音频上下文（需要用户交互）
+    function initAudioContext() {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+    }
+
+    // 自动选择最佳中文语音
+    function initVoice() {
+      const voices = synth.getVoices();
+
+      if (voices.length === 0) {
+        console.log('等待语音加载...');
+        return;
+      }
+
+      console.log('可用语音数量:', voices.length);
+
+      const priorities = [
+        'Microsoft Xiaoxiao',
+        'Microsoft Yaoyao',
+        'Microsoft Yunxi',
+        'Microsoft Yunyang',
+        'Google 普通话',
+        'Xiaoxiao',
+        'zh-CN',
+        'zh_CN'
+      ];
+
+      // 按优先级查找
+      for (const priority of priorities) {
+        for (const voice of voices) {
+          if (voice.name.includes(priority) || voice.lang.includes(priority.replace('_', '-'))) {
+            bestVoice = voice;
+            console.log('选择语音:', voice.name, voice.lang);
+            break;
+          }
+        }
+        if (bestVoice) break;
+      }
+
+      // 如果没找到，使用第一个中文语音
+      if (!bestVoice) {
+        for (const voice of voices) {
+          if (voice.lang && voice.lang.startsWith('zh')) {
+            bestVoice = voice;
+            console.log('使用备用语音:', voice.name, voice.lang);
+            break;
+          }
+        }
+      }
+
+      // 如果仍然没找到，列出所有语音
+      if (!bestVoice) {
+        console.log('未找到中文语音，可用语音:');
+        voices.forEach(v => console.log('-', v.name, v.lang));
+        // 使用第一个语音
+        if (voices.length > 0) {
+          bestVoice = voices[0];
+        }
+      }
+
+      isInitialized = true;
+    }
+
+    // 语音加载完成后初始化
+    if (synth.onvoiceschanged !== undefined) {
+      synth.onvoiceschanged = function() {
+        console.log('语音列表已更新');
+        initVoice();
+      };
+    }
+
+    // 初始加载
+    initVoice();
+
+    // 播放文本
+    function speakText(text, rate) {
+      initAudioContext();
+
+      // 确保语音已初始化
+      if (!isInitialized) {
+        initVoice();
+      }
+
+      // 停止当前播放
+      if (synth.speaking) {
+        synth.cancel();
+      }
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'zh-CN';
+      utterance.rate = rate;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+
+      if (bestVoice) {
+        utterance.voice = bestVoice;
+      } else {
+        // 如果没有指定语音，使用系统默认
+        utterance.lang = 'zh-CN';
+      }
+
+      // 添加错误处理
+      utterance.onerror = function(event) {
+        console.error('语音播放错误:', event.error, event.message);
+      };
+
+      utterance.onend = function() {
+        console.log('语音播放完成');
+      };
+
+      utterance.onstart = function() {
+        console.log('开始播放:', text);
+      };
+
+      // 播放
+      synth.speak(utterance);
+
+      // Chrome 需要定期调用 keepAlive 来保持播放
+      if (typeof window.chrome !== 'undefined') {
+        const keepAlive = setInterval(() => {
+          if (!synth.speaking) {
+            clearInterval(keepAlive);
+          } else {
+            synth.pause();
+            synth.resume();
+          }
+        }, 10000);
+      }
+    }
+
+    // 停止播放
+    function stopSpeaking() {
+      if (synth.speaking) {
+        synth.cancel();
+      }
+    }
+
+    // 获取语音状态
+    function getVoiceStatus() {
+      return {
+        isInitialized: isInitialized,
+        hasVoice: bestVoice !== null,
+        voiceName: bestVoice ? bestVoice.name : null,
+        isSpeaking: synth.speaking,
+        isPending: synth.pending,
+        voiceCount: synth.getVoices().length
+      };
+    }
+
+    // 页面可见性变化时恢复播放
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible' && synth.speaking) {
+        synth.pause();
+        setTimeout(() => synth.resume(), 100);
+      }
+    });
+
+    // 页面获得焦点时初始化
+    document.addEventListener('click', function initOnClick() {
+      initAudioContext();
+      initVoice();
+      document.removeEventListener('click', initOnClick);
+    }, { once: true });
+  </script>
+
+  <!--
+    You can customize the "flutter_bootstrap.js" script.
+    This is useful to provide a custom configuration to the Flutter loader
+    or to give the user feedback during the initialization process.
+
+    For more details:
+    * https://docs.flutter.dev/platform-integration/web/initialization
+  -->
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
