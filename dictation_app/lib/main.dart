@@ -42,6 +42,7 @@ class _MainScreenState extends State<MainScreen> {
   final List<String> _words = [];
   final Set<String> _selectedWords = {};
   double _interval = 5.0;
+  int _repeatCount = 2;
 
   @override
   void initState() {
@@ -64,6 +65,7 @@ class _MainScreenState extends State<MainScreen> {
             words: _words,
             selectedWords: _selectedWords,
             interval: _interval,
+            repeatCount: _repeatCount,
             onWordsChanged: (newWords) {
               setState(() {
                 _words.clear();
@@ -79,11 +81,13 @@ class _MainScreenState extends State<MainScreen> {
               });
             },
             onIntervalChanged: (newInterval) => setState(() => _interval = newInterval),
+            onRepeatCountChanged: (count) => setState(() => _repeatCount = count),
           ),
           DictationScreen(
             words: _words,
             selectedWords: _selectedWords,
             interval: _interval,
+            repeatCount: _repeatCount,
           ),
         ],
       ),
@@ -108,18 +112,22 @@ class SettingsScreen extends StatefulWidget {
   final List<String> words;
   final Set<String> selectedWords;
   final double interval;
+  final int repeatCount;
   final Function(List<String>) onWordsChanged;
   final Function(Set<String>) onSelectedWordsChanged;
   final Function(double) onIntervalChanged;
+  final Function(int) onRepeatCountChanged;
 
   const SettingsScreen({
     super.key,
     required this.words,
     required this.selectedWords,
     required this.interval,
+    required this.repeatCount,
     required this.onWordsChanged,
     required this.onSelectedWordsChanged,
     required this.onIntervalChanged,
+    required this.onRepeatCountChanged,
   });
 
   @override
@@ -319,6 +327,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             SizedBox(height: isSmallScreen ? 12 : 16),
+            Card(
+              child: Padding(
+                padding: EdgeInsets.all(isSmallScreen ? 12.0 : 16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('朗读重复次数', style: TextStyle(fontSize: isSmallScreen ? 16 : 18, fontWeight: FontWeight.bold)),
+                    SizedBox(height: isSmallScreen ? 8 : 12),
+                    Text('每个词重复朗读的次数', style: TextStyle(fontSize: isSmallScreen ? 12 : 14, color: Colors.grey)),
+                    SizedBox(height: isSmallScreen ? 8 : 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Slider(
+                            value: widget.repeatCount.toDouble(),
+                            min: 1,
+                            max: 5,
+                            divisions: 4,
+                            label: '${widget.repeatCount}次',
+                            onChanged: (value) {
+                              widget.onRepeatCountChanged(value.toInt());
+                              setState(() {});
+                            },
+                          ),
+                        ),
+                        SizedBox(
+                          width: 50,
+                          child: TextField(
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: isSmallScreen ? 14 : 16),
+                            controller: TextEditingController(text: widget.repeatCount.toString()),
+                            onSubmitted: (value) {
+                              final num = int.tryParse(value);
+                              if (num != null && num >= 1 && num <= 5) {
+                                widget.onRepeatCountChanged(num);
+                                setState(() {});
+                              }
+                            },
+                          ),
+                        ),
+                        SizedBox(width: isSmallScreen ? 2 : 4),
+                        const Text('次'),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(height: isSmallScreen ? 12 : 16),
             // 语音测试卡片
             Card(
               child: Padding(
@@ -466,12 +524,14 @@ class DictationScreen extends StatefulWidget {
   final List<String> words;
   final Set<String> selectedWords;
   final double interval;
+  final int repeatCount;
 
   const DictationScreen({
     super.key,
     required this.words,
     required this.selectedWords,
     required this.interval,
+    required this.repeatCount,
   });
 
   @override
@@ -486,6 +546,7 @@ class _DictationScreenState extends State<DictationScreen> {
   Timer? _timer;
   Timer? _progressTimer;
   int _remainingSeconds = 0;
+  int _currentRepeat = 1; // 当前重复次数
   bool get _useEdgeTTS => kIsWeb;
 
   // 获取实际的听写字词列表（只包含选中的）
@@ -527,7 +588,10 @@ class _DictationScreenState extends State<DictationScreen> {
 
   void _play() {
     if (_activeWords.isEmpty) return;
-    setState(() => _isPlaying = true);
+    setState(() {
+      _isPlaying = true;
+      _currentRepeat = 1;
+    });
     _showCurrentWord();
     _scheduleNext();
   }
@@ -557,9 +621,22 @@ class _DictationScreenState extends State<DictationScreen> {
     _timer = Timer(Duration(seconds: interval), () {
       _progressTimer?.cancel();
       if (_isPlaying && mounted) {
-        _next();
+        _afterInterval();
       }
     });
+  }
+
+  void _afterInterval() {
+    // 倒计时结束后，检查是否需要重复
+    if (_currentRepeat < widget.repeatCount) {
+      // 继续重复当前词
+      setState(() => _currentRepeat++);
+      _showCurrentWord();
+      _scheduleNext();
+    } else {
+      // 重复完成，进入下一个词
+      _moveToNextWord();
+    }
   }
 
   void _showCurrentWord() {
@@ -567,9 +644,12 @@ class _DictationScreenState extends State<DictationScreen> {
     _speak(_activeWords[_currentIndex]);
   }
 
-  void _next() {
+  void _moveToNextWord() {
     if (_currentIndex < _activeWords.length - 1) {
-      setState(() => _currentIndex++);
+      setState(() {
+        _currentIndex++;
+        _currentRepeat = 1;
+      });
       _showCurrentWord();
       if (_isPlaying) _scheduleNext();
     } else {
@@ -581,9 +661,24 @@ class _DictationScreenState extends State<DictationScreen> {
     }
   }
 
+  void _next() {
+    // 手动点击下一个按钮时，直接跳到下一个词
+    if (_currentIndex < _activeWords.length - 1) {
+      setState(() {
+        _currentIndex++;
+        _currentRepeat = 1;
+      });
+      _showCurrentWord();
+      if (_isPlaying) _scheduleNext();
+    }
+  }
+
   void _previous() {
     if (_currentIndex > 0) {
-      setState(() => _currentIndex--);
+      setState(() {
+        _currentIndex--;
+        _currentRepeat = 1;
+      });
       _showCurrentWord();
       if (_isPlaying) _scheduleNext();
     }
@@ -595,6 +690,7 @@ class _DictationScreenState extends State<DictationScreen> {
       _currentIndex = 0;
       _showWord = false;
       _remainingSeconds = 0;
+      _currentRepeat = 1;
     });
   }
 
